@@ -1,44 +1,29 @@
 import numpy as np
 
 def H_P_vectorized(D_matrix, beta_vector):
-    """
-    Вычисляет энтропию и вероятности для ВСЕХ точек одновременно.
+    P_matrix = np.exp(-D_matrix * beta_vector)
     
-    D_matrix: матрица расстояний (N, N)
-    beta_vector: вектор значений beta для каждой точки (N, 1)
-    """
-    
-    # Умножаем матрицу расстояний на вектор beta
-    E = -D_matrix * beta_vector
-    
-    P_matrix = np.exp(E)
-    # Насильно зануляем диагональ (в формуле сама точка не участвует, а у нас там e^0 = 1)
     np.fill_diagonal(P_matrix, 0)
     
     sum_P = np.sum(P_matrix, axis=1, keepdims=True)
     
-    H = np.log(sum_P) + beta_vector * np.sum(D_matrix * P_matrix, axis=1, keepdims=True) / sum_P
+    eps = 1e-12
+    safe_sum_P = sum_P + eps
     
-    P_matrix = P_matrix / sum_P
-    return H.flatten(), P_matrix
+    H = np.log(safe_sum_P) + beta_vector * np.sum(D_matrix * P_matrix, axis=1, keepdims=True) / safe_sum_P
+    P_matrix = P_matrix / safe_sum_P
+    
+    return H, P_matrix
 
 def x2p(X, tol=1e-5, perplexity=30.0):
-    """
-    Векторизованный бинарный поиск матрицы P.
-    Работает со всеми точками одновременно без циклов по N.
-    """
-
     n, d = X.shape
     sum_X = np.sum(np.square(X), axis=1)
     
-    # Матрица расстояний D размером (n, n)
     D = np.add(np.add(-2 * np.dot(X, X.T), sum_X).T, sum_X)
     
-    # На всякий случай зануляем чистую диагональ
     np.fill_diagonal(D, 0)
 
-    # Инициализируем массивы для бинарного поиска
-    beta = np.ones((n, 1))          # Текущие бета для каждой точки
+    beta = np.ones((n, 1))       
     betamin = np.full((n, 1), -np.inf)
     betamax = np.full((n, 1), np.inf)
     logU = np.log(perplexity)
@@ -46,44 +31,32 @@ def x2p(X, tol=1e-5, perplexity=30.0):
     for tries in range(50):
         H, P = H_P_vectorized(D, beta)
         
-        # H возвращается как одномерный массив, делаем его (n, 1) для операций
+
         Hdiff = H.reshape(-1, 1) - logU
-        
-        # Проверяем, для каких точек условие точности ЕЩЕ НЕ выполнено
-        # Если погрешность меньше tol, мы просто перестаем обновлять beta для этих точек
+
         non_converged = np.abs(Hdiff) > tol
-        
-        # Если для всех точек точность достигнута — досрочно выходим
+
         if not np.any(non_converged):
             break
             
-        # Логика бинарного поиска, переложенная на маски NumPy:
-        
-        # Hdiff > 0 (энтропия слишком большая -> нужно увеличить beta)
         case_greater = non_converged & (Hdiff > 0)
         betamin[case_greater] = beta[case_greater]
-        
-        # Маска для точек, у которых верхняя граница еще бесконечна
+
         inf_max = (betamax == np.inf) | (betamax == -np.inf)
-        
-        # Если max бесконечен: удваиваем
+
         idx1 = case_greater & inf_max
         beta[idx1] *= 2.
-        # Если max уже определен: берем середину отрезка
+
         idx2 = case_greater & ~inf_max
         beta[idx2] = (beta[idx2] + betamax[idx2]) / 2.
         
-        # Hdiff <= 0 (энтропия маленькая -> нужно уменьшить beta)
         case_less = non_converged & (Hdiff <= 0)
         betamax[case_less] = beta[case_less]
         
-        # Маска для точек, у которых нижняя граница еще бесконечна
         inf_min = (betamin == np.inf) | (betamin == -np.inf)
-        
-        # Если min бесконечен: делим на 2
+
         idx3 = case_less & inf_min
         beta[idx3] /= 2.
-        # Если min определен: берем середину отрезка
         idx4 = case_less & ~inf_min
         beta[idx4] = (beta[idx4] + betamin[idx4]) / 2.
 
@@ -115,19 +88,6 @@ def tsne(
     early_exaggeration = 4.0,
     exaggeration_iters = 100
 ):
-    """
-    Выполняет алгоритм t-SNE для снижения размерности данных.
-    
-    Параметры:
-        X: Исходный массив данных размера (N, D)
-        no_dims: Целевая размерность
-        initial_dims: До скольки компонент сжать данные с помощью PCA перед t-SNE
-        perplexity: Целевая перплексия
-        lr: Скорость обучения
-        n_iter: Количество итераций градиентного спуска
-        early_exaggeration: Коэффициент преувеличения на ранних итерациях
-        exaggeration_iters: Сколько первых итераций применять преувеличение
-    """
     
     X_reduced = pca(X, initial_dims).real
     n, _ = X_reduced.shape
